@@ -1,0 +1,438 @@
+---
+title: "FinalIndividualHW"
+author: "Jack Keaveny"
+date: "2024-12-21"
+output: 
+  html_document: 
+    theme: simplex
+    toc: true
+    toc_float: true
+---
+
+## Loading In and Understanding our Data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(tidymodels)
+library(fastDummies)
+library(GGally)
+library(factoextra)
+library(FactoMineR)
+library(ggplot2)
+library(corrplot)
+library(reshape2)
+
+set.seed(54)
+```
+
+
+```{r, results = FALSE}
+# Loading in our data
+hr_data <- read.csv("C:/Users/Jack Keaveny/Downloads/HRDataset_v14.csv")
+```
+
+```{r, results = FALSE}
+# Looking at variable summary statistics and checking for NA values
+summary(hr_data, results = FALSE)
+
+colSums(is.na(hr_data))
+```
+
+
+I found that there are 8 NA values for 311 total observations under ManagerID for this data set. Upon going through and looking at these NA values myself, it appears that they could be cleaned up for further cohesiveness in our data set and more accurate results. All of the rows with NA values have the manager 'Webster Butler' who has the ManagerID of 39. Therefore, we're going to fill in the missing values with 39.
+
+
+```{r}
+# Replacing NA values with 39
+hr_data$ManagerID[is.na(hr_data$ManagerID)] <- 39
+
+sum(is.na(hr_data$ManagerID))
+```
+
+
+## Questions
+
+
+I'm going to be answering some of the provided example questions, as well as a few of my own through a number of different techniques including simple visual/descriptive analysis, PCA analysis, and cluster analysis.
+
+
+### 1. Is there any correlation between who an employee works for and their performance score?
+
+```{r}
+# Creating a point plot of the mean performance scores for each manager
+
+ggplot(hr_data, aes(x = as.factor(ManagerID), y = PerfScoreID)) +
+  stat_summary(fun = mean, geom = "point", color = "blue", size = 3) +
+  stat_summary(fun.data = mean_cl_normal, geom = "errorbar", width = 0.2) +
+  labs(title = "Mean Performance Score by ManagerID", x = "ManagerID", y = "Performance Score")
+
+```
+
+```{r}
+# Counting the number of ManagerId = 15 observations
+sum(hr_data$ManagerID == 15, na.rm = TRUE)
+```
+
+
+As we can see, there is no drastic difference in performance between most of the managers. It is notable that ManagerID 15 appears to have a wider variance in outcomes, but this is merely to account for the fact that this ManagerId only shows up three times in our data set. 
+
+
+### 2. What is the overall diversity profile of the data set?
+
+```{r}
+# Bar plot to show our race/gender demographic makeup
+ggplot(hr_data, aes(x = RaceDesc, fill = Sex)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Diversity Profile: Race/Gender", x = "Race", y = "Frequency") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+Here we can see the demographic makeup of the company. White men and women make up the vast majority of the employees, with Black/African American men and women behind. There are far more women at the company than there are men as well. Let's do a quick cluster analysis to further understand the kinds of employees working at the company, now including marital status as well. Given the small size of the data set, we'll be performing hierachical clustering with a dendrogram.
+
+
+```{r}
+# Cleaning/encoding HispanicLatino
+hr_data$HispanicLatino <- tolower(hr_data$HispanicLatino)
+hr_data$HispanicLatino <- ifelse(hr_data$HispanicLatino == "yes", 1, 0)
+
+# Encoding dummy variables for RaceDesc
+hr_data <- dummy_cols(hr_data, select_columns = "RaceDesc", remove_first_dummy = TRUE)
+
+# Subsetting our diversity-related variables (including MaritalStatusID)
+diversity_data <- hr_data[, c("GenderID", "HispanicLatino", "MaritalStatusID", grep("RaceDesc_", colnames(hr_data), value = TRUE))]
+
+# Scaling data
+diversity_data_scaled <- scale(diversity_data)
+```
+
+```{r}
+# Computing the distance matrix
+dist_matrix1 <- dist(diversity_data_scaled, method = "euclidean")
+
+# Hierarchical clustering (Ward's method proved to be easier to interpret)
+hclust_result1 <- hclust(dist_matrix1, method = "ward.D2")
+
+# Visualizing the dendrogram (k=7 aligns best with the visual results)
+plot(hclust_result1, labels = FALSE, hang = -1, main = "Dendrogram of Diversity Profile Clusters")
+rect.hclust(hclust_result1, k = 7, border = "red")
+
+# Assigning clusters
+clusters <- cutree(hclust_result1, k = 7)
+hr_data$Cluster <- as.factor(clusters)
+
+# Visualizing diversity clusters
+fviz_cluster(list(data = diversity_data_scaled, cluster = clusters),
+             palette = c('blue', 'purple', 'red', 'orange', 'pink', 'yellow', 'green'),
+             ellipse.type = "convex", 
+             repel = F, 
+             show.clust.cent = FALSE, 
+             ggtheme = theme_classic())
+
+```
+
+
+```{r}
+# Understanding how our clusters are separated/made
+cluster_summary <- aggregate(diversity_data, by = list(Cluster = hr_data$Cluster), mean)
+print(cluster_summary)
+
+#PCA to understand the proportions of variance explained by first few dimensions
+pca_result <- prcomp(diversity_data_scaled)
+summary(pca_result)
+```
+
+
+Here, we can see the results of our clustering. The clustering process wasn't entirely smooth or overly . There is a bit of overlap, especially with our 4th cluster in how the groupings were created, but this is the most cohesive I was able to make it. There is also one cluster with only one observation, which means that we have one very unique individual working within the company.
+
+Our first cluster is comprised of likely married men from a white background. The second cluster is white, very likely non-single men and women. Our third cluster is likely non-single (mostly) women of African descent. Our fourth cluster is a bit less straightforward than these. This cluster is comprised of Hispanic, Black, and White men and women who are more likely single. The fifth cluster is comprised of Hispanic individuals of multiple racial backgrounds. The 6th cluster is mostly women who are likely non-single and entirely of Asian descent. And our last cluster is a single Hispanic man.
+
+
+### 3. What are our best recruiting sources if we want to ensure a diverse organization?
+
+
+Now that we've seen our demographic makeup, it's now time to ask how we can make the company more diverse. Having a more diverse workplace will make everyone feel more welcome, and a myriad of different backgrounds and experiences is beneficial for both company culture and the emergence of new ideas.
+
+As we've seen, white men and women make up the vast majority of the company, so we'll be focusing our efforts to recruit more people of Black, Asian, Hispanic, and American Indian/Alaskan descent. 
+
+```{r}
+# Grouped bar chart for race by recruitment source
+ggplot(hr_data, aes(x = RecruitmentSource, fill = RaceDesc)) +
+  geom_bar(position = "fill") +
+  labs(title = "Recruitment Source and Diversity", x = "Recruitment Source", y = "Proportion") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+As we can see from this graph, most methods of recruitment are targeting only white men and women for hiring. The only method that goes against this is the Diversity Job Fair, although this method is only targeting Black individuals. Because there are not many Black employees within the organization, this method is beneficial for the diversity of the company and should be used in the future, but it should not be the only/primary method. I would advise to stop hiring using the online job application or 'other' given that these methods solely target white people. Instead, the best options for garnering the most diverse mix of individuals appears to be Indeed, LinkedIn, and Google.
+
+
+### 4. Can we predict who is going to terminate and who isn't? What level of accuracy can we achieve on this?
+
+
+In order to answer this question, I'm going to build a random forest classification model to predict whether or not an employee will be fired. Termd will be our target variable, and I'm only going to use numeric variables for our predictors. Given that companies are not allowed to terminate indivudals based on race or gender, it will be interesting to see our results.
+
+
+```{r}
+# Selecting numeric columns only
+numeric_data <- hr_data[, sapply(hr_data, is.numeric)]
+
+# Remove unimportant/irrelevant variables from the numeric dataset
+numeric_data <- numeric_data %>%
+  select(-EmpStatusID, -EmpID, -ManagerID, -DeptID, -Zip)
+
+# Ensuring Termd is in the data and set as a factor (for classification)
+numeric_data$Termd <- as.factor(hr_data$Termd)
+
+# Creating our split (0.8 was found to maximize accuracy while still keeping a decent number of testing observations)
+data_split <- initial_split(numeric_data, prop = 0.8, strata = Termd)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+# Initializing our recipe
+rf_recipe <- recipe(Termd ~ ., data = train_data) %>%
+  step_normalize(all_numeric_predictors())
+
+# Model creation
+rf_spec <- rand_forest(mtry = tune(), trees = 500, min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+# Workflow creation
+rf_workflow <- workflow() %>%
+  add_recipe(rf_recipe) %>%
+  add_model(rf_spec)
+
+# Creating our folds and setting seed for reproducibility
+set.seed(42)
+cv_folds <- vfold_cv(train_data, v = 5)
+
+# Tuning our model
+rf_tune_results <- tune_grid(
+  rf_workflow,
+  resamples = cv_folds,
+  grid = 10,  # Number of tuning grid combinations
+  metrics = metric_set(roc_auc, accuracy)
+)
+
+# Selecting the best hyperparameters to achieve best accuracy
+best_params <- select_best(rf_tune_results, metric = "accuracy")
+
+# Finalizing our workflow
+final_rf_workflow <- finalize_workflow(rf_workflow, best_params)
+final_rf_fit <- fit(final_rf_workflow, data = train_data)
+```
+
+
+```{r}
+# Predictions for probabilities and classes
+rf_predictions <- predict(final_rf_fit, new_data = test_data, type = "prob") %>%
+  bind_cols(predict(final_rf_fit, new_data = test_data, type = "class")) %>%
+  bind_cols(test_data)
+
+# Confusion matrix
+conf_mat <- conf_mat(rf_predictions, truth = Termd, estimate = .pred_class)
+print(conf_mat)
+
+# Metrics (accuracy, roc_auc, precision, recall, f1)
+metrics_results <- rf_predictions %>%
+  yardstick::metrics(truth = Termd, estimate = .pred_class, .pred_1)
+
+precision <- precision(rf_predictions, truth = Termd, estimate = .pred_class)
+recall <- recall(rf_predictions, truth = Termd, estimate = .pred_class)
+f1_score <- f_meas(rf_predictions, truth = Termd, estimate = .pred_class)
+
+# Printing out various classification metrics
+cat("Accuracy:", metrics_results %>% filter(.metric == "accuracy") %>% pull(.estimate), "\n")
+cat("ROC AUC:", metrics_results %>% filter(.metric == "roc_auc") %>% pull(.estimate), "\n")
+cat("Precision:", precision %>% pull(.estimate), "\n")
+cat("Recall:", recall %>% pull(.estimate), "\n")
+cat("F1 Score:", f1_score %>% pull(.estimate), "\n")
+
+```
+
+
+The model has an overall accuracy of 0.667 which means that our model is fairly accurate, but not enough to make any concrete conclusions about termination decisions. I found however that adjusting our training/testing split made a significant difference in accuracy meaning that if we had more data, it is very likely that we would be able to achieve a better score. Let's look at a feature importance visual to understand how the model is weighting the variables.
+
+
+```{r}
+# Refitting the model with feature importance enabled
+rf_spec <- rand_forest(mtry = tune(), trees = 500, min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+# Finalizing our workflow and fitting the model to training data
+final_rf_fit <- finalize_workflow(rf_workflow, best_params) %>%
+  fit(data = train_data)
+
+# Extracting feature importance
+importance <- final_rf_fit %>%
+  extract_fit_parsnip() %>%
+  vip::vi()
+
+# Plotting feature importance
+library(ggplot2)
+ggplot(importance, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Feature Importance",
+       x = "Features",
+       y = "Importance") +
+  theme_minimal()
+
+```
+
+
+By looking primarily at worker salary, the number of absences, and the results of an employee's engagement survey, it appears we can somewhat predict whether or not an employee will be terminated. It's once again important to remember that our model is working with a very small number of observations and therefore an even smaller number of observations of employees who were terminated to test with.
+
+
+### 5. Are there areas of the company where the pay is not equitable?
+
+
+Let's look at some salary trends for various groups within the company. Once again, we'll be going back to our previously created clusters to see if there is any major difference between those groups.
+
+```{r}
+# Boxplot for salary by diversity cluster
+ggplot(hr_data, aes(x = as.factor(Cluster), y = Salary, fill = as.factor(Cluster))) +
+  geom_boxplot(outlier.colour = "red", alpha = 0.7) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Salary Distribution by Clusters",
+       x = "Cluster",
+       y = "Salary") +
+  theme_minimal()
+
+```
+
+
+Based on this graphic, there does not appear to be any major salary difference based on our diversity clusters that we previously created, meaning that the company is not biasing any one race/gender/marital status when it comes to pay.
+
+Now, let's see if salary varies by department.
+
+
+```{r}
+# Boxplot for salary by department
+ggplot(hr_data, aes(x = reorder(Department, Salary, FUN = median), y = Salary, fill = as.factor(DeptID))) +
+  geom_boxplot(outlier.color = "red", alpha = 0.7) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Salary Distribution by Department",
+       x = "Department (ordered by Median Salary)",
+       y = "Salary",
+       fill = "Department") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+As we can see here, the median salaries for production team members tend to be the lowest, while the IT and Software Engineering departments get paid more. Executive office members make far more money than the rest of the company, but this is to be expected for upper management positions. 
+
+
+### Question 6: What factors contribute most to employee morale?
+
+
+Using EmpSatisfaction, I want to look at which factors correlate the highest with employee morale so that the company can understand how to better keep a positive workplace environment.
+
+
+```{r}
+# Select numeric columns and exclude irrelevant ones
+numeric_subset <- numeric_data %>%
+  select(-Termd, -contains("RaceDesc_"))
+
+# Computing correlation matrix
+cor_matrix <- cor(numeric_subset, use = "complete.obs")
+
+#Reshaping the correlation matrix to plot easier
+correlation_data <- melt(cor_matrix)
+
+# Heatmap of correlations for numeric relevant variables
+ggplot(correlation_data, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1, 1)) +
+  theme_minimal() +
+  labs(title = "Heatmap of Numeric Variables for HR data",
+       x = "Variables", y = "Variables") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+It appears that there is not much correlation between EmpSatisfaction and other variables as I previously thought. We can see that PerfScoreId and EngagementSurvey are relatively strongly correlated with satisfaction, and DaysLateLast30 is relatively strongly negatively correlated. Overall, it seems that simply more engaged and focused employees tend to be happier and more satisfied with their work. I expected salary to have a decent amount of correlation, but it actually has very little.
+
+
+### Question 7: How are performance scores affected by an employee's number of special projects?
+
+
+I noticed in our last question's heatmap that salary and number of special projects are highly correlated, so I'd like to look further into the special projects variable. The more special projects an employee has, it is possible that they could become overworked and their performance could take a dip. Let's look at the relationship between special project count and performance score.
+
+
+```{r}
+# Scatter plotting of performance score vs. special projects count
+ggplot(hr_data, aes(x = SpecialProjectsCount, y = as.numeric(PerfScoreID))) +
+  geom_point(color = 'red', alpha = 0.6) +
+  labs(
+    title = "Relationship between Performance Scores and # of Special Projects",
+    x = "Number of Special Projects",
+    y = "Performance Score (Numeric)"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1) 
+  )
+
+```
+
+
+There appears to be significant correlation between number of special projects and performance score, the scatterplot clearly shows a somewhat random assortment of points.
+
+
+### 8. Do certain recruitment sources attract better-performing employees?
+
+
+For this question, I'll perform a PCA analysis including the RecruitmentSource, PerfScoreID, EmpSatisfaction, EngagementSurvey, Absences, and DaysLateLast30 variables to better understand the relationships between recruitment source and the success and overall happiness of our employees.
+
+```{r}
+library(caret)
+
+# Selecting variables for PCA
+pca_data <- hr_data %>%
+  select(PerfScoreID, EmpSatisfaction, EngagementSurvey, Absences, DaysLateLast30) %>%
+  mutate(PerfScoreID = as.numeric(PerfScoreID))
+  
+
+# Scaling our data to prepare for PCA
+pca_data_scaled <- scale(pca_data)
+
+# Applying PCA
+pca_result <- prcomp(pca_data_scaled, center = TRUE, scale. = TRUE)
+summary(pca_result)
+
+# Barplot the explained variance
+explained_variance <- data.frame(
+  PC = 1:length(pca_result$sdev),
+  Variance = pca_result$sdev^2 / sum(pca_result$sdev^2)
+)
+
+ggplot(explained_variance, aes(x = PC, y = Variance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "PCA Explained Variance", x = "Principal Component", y = "Proportion of Variance") +
+  theme_minimal()
+
+pca_data_with_components <- as.data.frame(pca_result$x)
+
+# Plotting the relationship between our first two components and hiring source
+ggplot(pca_data_with_components, aes(PC1, PC2, color = hr_data$RecruitmentSource)) +
+  geom_point() +
+  labs(title = "PCA of Recruitment Sources and Employee Success",
+       x = "Principal Component 1", y = "Principal Component 2") +
+  theme_minimal() 
+
+```
+
+
+From our PCA relationship plot, we can see that the hiring method or site used makes no significant difference when it comes to the quality and happiness of an employee. This is what I expected, but I wanted to be sure given that it might impact the answer to Question 3, where I gave recommendations on which hiring sources to use.
+
+Thank you for reading my analysis!
